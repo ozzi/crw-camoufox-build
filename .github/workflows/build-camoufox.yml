@@ -49,6 +49,21 @@ jobs:
           echo "features=$FEATURES" >> "$GITHUB_OUTPUT"
           echo "Собираю $REF с фичами: $FEATURES"
 
+      # Без этого шага input upstream_ref менял бы только имя артефакта, а сборка
+      # шла бы с содержимого ветки build — то есть из произвольного состояния.
+      - name: Переключиться на указанный тег
+        if: ${{ inputs.upstream_ref != '' }}
+        run: |
+          set -euo pipefail
+          REF="${{ steps.meta.outputs.ref }}"
+          git rev-parse -q --verify "refs/tags/${REF}" >/dev/null \
+            || { echo "::error::тег ${REF} не найден в этом репозитории — синхронизируй форк (gh repo sync) или сделай fetch --tags"; exit 1; }
+          git checkout --force "refs/tags/${REF}"
+          echo "HEAD теперь: $(git describe --tags --always)  $(git rev-parse HEAD)"
+          # workflow-файл живёт только в ветке build, поэтому возвращаемся к ней
+          # отдельным worktree-независимым способом: сборка идёт из исходников тега.
+          git log --oneline -1
+
       - name: Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
