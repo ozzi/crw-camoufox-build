@@ -1,0 +1,127 @@
+name: Build crw-server (camoufox tier)
+
+# Собирает crw-server из ТЕГА апстрима с нужными фичами и проверяет,
+# что тир реально попал в бинарник (не только скомпилировался).
+#
+# Зачем: дистрибутивный .deb и релизные бинарники апстрима собраны с дефолтными
+# фичами (--features cdp), поэтому `[renderer.camoufox]` в конфиге игнорируется,
+# а пул остаётся ["lightpanda"]. Здесь включаем фичу на сборке.
+
+on:
+  workflow_dispatch:
+    inputs:
+      features:
+        description: "Фичи crw-server (например cdp,camoufox или cdp,camoufox,impersonated)"
+        required: false
+        default: "cdp,camoufox"
+      upstream_ref:
+        description: "Тег апстрима для сборки (по умолчанию — тег текущей ветки)"
+        required: false
+        default: ""
+  push:
+    branches: [build]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Определить версию и фичи
+        id: meta
+        run: |
+          set -euo pipefail
+          REF="${{ inputs.upstream_ref }}"
+          if [ -z "$REF" ]; then REF="$(git describe --tags --abbrev=0 2>/dev/null || echo unknown)"; fi
+          FEATURES="${{ inputs.features }}"
+          if [ -z "$FEATURES" ]; then FEATURES="cdp,camoufox"; fi
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+          echo "features=$FEATURES" >> "$GITHUB_OUTPUT"
+          echo "Собираю $REF с фичами: $FEATURES"
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Кэш cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: crw-server-features
+          cache-on-failure: true
+
+      - name: Сборка crw-server
+        run: |
+          set -euo pipefail
+          cargo build --release -p crw-server --features "${{ steps.meta.outputs.features }}"
+
+      - name: Версия бинарника
+        run: |
+          ./target/release/crw-server --version || ./target/release/crw-server version || true
+
+      # ГЛАВНАЯ ПРОВЕРКА. Конфиг с секцией camoufox на недоступный сайдкар:
+      # скомпилированная фича даёт camoufox в пуле (health-проба идёт позже),
+      # а бинарник без фичи молча игнорирует секцию и оставляет ["lightpanda"].
+      - name: Проверить, что тир camoufox реально скомпилирован
+        run: |
+          set -euo pipefail
+          cat > /tmp/tier-probe.toml <<'EOF'
+          [server]
+          host = "127.0.0.1"
+          port = 3099
+
+          [renderer]
+          mode = "auto"
+
+          [renderer.camoufox]
+          base_url = "http://127.0.0.1:9377"
+          include_in_auto = true
+          EOF
+          CRW_CONFIG=/tmp/tier-probe.toml ./target/release/crw-server > /tmp/probe.log 2>&1 &
+          PID=$!
+          for i in $(seq 1 30); do
+            if grep -q "fallback order" /tmp/probe.log; then break; fi
+            sleep 1
+          done
+          kill "$PID" 2>/dev/null || true
+          echo "--- строки старта ---"
+          grep -iE "fallback order|renderer|features" /tmp/probe.log | head -10
+          if ! grep -q 'fallback order.*camoufox' /tmp/probe.log; then
+            echo "::error::Тир camoufox НЕ попал в пул — фича не скомпилирована"
+            exit 1
+          fi
+          echo "OK: camoufox присутствует в пуле рендереров"
+
+      - name: Пакет и контрольные суммы
+        run: |
+          set -euo pipefail
+          REF="${{ steps.meta.outputs.ref }}"
+          DEST="crw-server-${REF}-linux-x64"
+          mkdir -p "$DEST"
+          cp target/release/crw-server "$DEST/"
+          cp Cargo.toml "$DEST/Cargo.toml.upstream" 2>/dev/null || true
+          echo "upstream_ref=${REF}" > "$DEST/BUILD-INFO.txt"
+          echo "features=${{ steps.meta.outputs.features }}" >> "$DEST/BUILD-INFO.txt"
+          echo "commit=$(git rev-parse HEAD)" >> "$DEST/BUILD-INFO.txt"
+          echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$DEST/BUILD-INFO.txt"
+          tar czf "${DEST}.tar.gz" "$DEST"
+          sha256sum "${DEST}.tar.gz" > SHA256SUMS
+          cat SHA256SUMS
+          ls -la "${DEST}.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: crw-server-${{ steps.meta.outputs.ref }}-linux-x64
+          path: |
+            crw-server-*.tar.gz
+            SHA256SUMS
+          if-no-files-found: error
+          retention-days: 90
