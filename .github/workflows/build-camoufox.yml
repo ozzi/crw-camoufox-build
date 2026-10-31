@@ -24,6 +24,12 @@ on:
 permissions:
   contents: read
 
+# Серия пушей в build больше не запускает три сборки параллельно:
+# новая отменяет предыдущую (сборка занимает 5–7 минут).
+concurrency:
+  group: build-camoufox-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_PROFILE_RELEASE_DEBUG: "0"
