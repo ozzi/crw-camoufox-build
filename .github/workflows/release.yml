@@ -150,20 +150,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            platform: darwin
-            arch_label: x64
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            platform: darwin
-            arch_label: arm64
+          # Только Linux: macOS (×10 минут) и Windows (×2) в форке не нужны,
+          # а их сборки падали на каждом теге (v0.38.0–v0.39.1).
           # Linux ships static musl builds so the binaries run on ANY glibc
-          # (old Debian/Ubuntu, Alpine, etc.). A glibc-linked build requires the
-          # builder's glibc (≥2.38) and crashes on older hosts with
-          # "GLIBC_2.xx not found". Safe here: TLS is rustls+ring (no native
-          # openssl), so musl links cleanly. Asset/npm names (linux-x64/arm64)
-          # are unchanged; both built via cross (musl toolchain in its image).
+          # (old Debian/Ubuntu, Alpine, etc.). TLS is rustls+ring (no native
+          # openssl), so musl links cleanly.
           - target: x86_64-unknown-linux-musl
             os: ubuntu-latest
             platform: linux
@@ -174,14 +165,6 @@ jobs:
             platform: linux
             arch_label: arm64
             cross: true
-          - target: x86_64-pc-windows-msvc
-            os: windows-latest
-            platform: win32
-            arch_label: x64
-          - target: aarch64-pc-windows-msvc
-            os: windows-latest
-            platform: win32
-            arch_label: arm64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -13,6 +13,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: docker-build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -30,3 +34,6 @@ jobs:
           push: false
           platforms: linux/amd64,linux/arm64
           outputs: type=cacheonly
+          # Кэш слоёв между прогонами: QEMU-сборка arm64 иначе каждый раз с нуля.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
